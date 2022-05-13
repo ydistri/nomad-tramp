@@ -1,12 +1,14 @@
-;;; docker-tramp.el --- TRAMP integration for docker containers  -*- lexical-binding: t; -*-
+;;; nomad-tramp.el --- TRAMP integration for HashiCorp Nomad docker containers  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2015 Mario Rodas <marsam@users.noreply.github.com>
+;; Copyright (C) 2022 YDISTRI S.E.
 
-;; Author: Mario Rodas <marsam@users.noreply.github.com>
+;; Author: Matus Goljer <matus.goljer@ydistri.com>
+;; Original Author: Mario Rodas <marsam@users.noreply.github.com>
 ;; URL: https://github.com/emacs-pe/docker-tramp.el
-;; Keywords: docker, convenience
-;; Version: 0.1.1
-;; Package-Requires: ((emacs "24") (cl-lib "0.5"))
+;; Keywords: docker, nomad, convenience
+;; Version: 0.0.1
+;; Package-Requires: ((emacs "26") (dash "2.19.1") (cl-lib "0.5"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -27,31 +29,29 @@
 
 ;;; Commentary:
 ;;
-;; `docker-tramp.el' offers a TRAMP method for Docker containers.
+;; `nomad-tramp.el' offers a TRAMP method for Docker containers
+;; deployed on HashiCorp Nomad.
 ;;
-;; > **NOTE**: `docker-tramp.el' relies in the `docker exec` command.  Tested
-;; > with docker version 1.6.x but should work with versions >1.3.  Podman
-;; > also works.
+;; > **NOTE**: `nomad-tramp.el' relies on the `nomad exec`
+;; > command.  Tested with nomad version 1.2.6+ but should work with
+;; > any nomad version which supports exec.
 ;;
 ;; ## Usage
 ;;
-;; Offers the TRAMP method `docker` to access running containers
+;; Offers the TRAMP method `nomad-exec` to access running containers
 ;;
-;;     C-x C-f /docker:user@container:/path/to/file
+;;     C-x C-f /nomad-exec:user@alloc-task:/path/to/file
 ;;
 ;;     where
 ;;       user           is the user that you want to use inside the container (optional)
-;;       container      is the id or name of the container
+;;       alloc          is the allocation ID
+;;       task           is the task name
 ;;
 ;; ### [Multi-hop][] examples
 ;;
 ;; If you container is hosted on `vm.example.net`:
 ;;
-;;     /ssh:vm-user@vm.example.net|docker:user@container:/path/to/file
-;;
-;; If you need to run the `docker` command as, say, the `root` user:
-;;
-;;     /sudo:root@localhost|docker:user@container:/path/to/file
+;;     /ssh:vm-user@vm.example.net|nomad-exec:user@f8a4a37f-web:/path/to/file
 ;;
 ;; ## Troubleshooting
 ;;
@@ -83,69 +83,116 @@
 ;;; Code:
 (eval-when-compile (require 'cl-lib))
 
+(require 'dash)
 (require 'tramp)
 (require 'tramp-cache)
 
-(defgroup docker-tramp nil
+(defgroup nomad-tramp nil
   "TRAMP integration for Docker containers."
-  :prefix "docker-tramp-"
+  :prefix "nomad-tramp-"
   :group 'applications
-  :link '(url-link :tag "Github" "https://github.com/emacs-pe/docker-tramp.el")
-  :link '(emacs-commentary-link :tag "Commentary" "docker-tramp"))
+  :link '(url-link :tag "Github" "https://github.com/ydistri/nomad-tramp.el")
+  :link '(emacs-commentary-link :tag "Commentary" "nomad-tramp"))
 
-(defcustom docker-tramp-docker-executable "docker"
-  "Path to docker (or compatible) executable."
-  :type '(choice
-          (const "docker")
-          (const "podman")
-          (string))
-  :group 'docker-tramp)
+(defconst nomad-tramp-docker-executable "nomad")
 
 ;;;###autoload
-(defcustom docker-tramp-docker-options nil
-  "List of docker options."
+(defcustom nomad-tramp-nomad-options nil
+  "List of extra nomad options."
   :type '(repeat string)
-  :group 'docker-tramp)
+  :group 'nomad-tramp)
 
-(defcustom docker-tramp-use-names nil
-  "Whether use names instead of id."
+(defcustom nomad-tramp-use-names t
+  "If non-nil, use task.group names instead of allocation id."
   :type 'boolean
-  :group 'docker-tramp)
+  :group 'nomad-tramp)
+
+(defcustom nomad-nomad-addr "http://localhost:4646"
+  "Address where the Nomad API is accessible."
+  :type 'string
+  :group 'nomad-tramp)
 
 ;;;###autoload
-(defconst docker-tramp-completion-function-alist
-  '((docker-tramp--parse-running-containers  ""))
-  "Default list of (FUNCTION FILE) pairs to be examined for docker method.")
+(defconst nomad-tramp-completion-function-alist
+  '((nomad-tramp--parse-running-jobs ""))
+  "Default list of (FUNCTION FILE) pairs to be examined for nomad-exec method.")
 
 ;;;###autoload
-(defconst docker-tramp-method "docker"
-  "Method to connect docker containers.")
+(defconst nomad-tramp-method "nomad"
+  "Method to connect HashiCorp Nomad docker containers.")
 
-(defun docker-tramp--running-containers ()
-  "Collect docker running containers.
+(defun nomad-tramp--call-nomad-api (api-route)
+  (with-current-buffer
+      (url-retrieve-synchronously
+       (format "%s/v1/%s" nomad-nomad-addr api-route))
+    (goto-char (point-min))
+    (search-forward "\n\n")
+    (delete-region (point-min) (point))
+    (json-read-from-string (buffer-string))
+    ))
 
-Return a list of containers of the form: \(ID NAME\)"
-  (cl-loop for line in (cdr (ignore-errors (apply #'process-lines docker-tramp-docker-executable (append docker-tramp-docker-options (list "ps")))))
-           for info = (split-string line "[[:space:]]+" t)
-           collect (cons (car info) (last info))))
+(defun nomad-tramp--running-tasks ()
+  "Collect running tasks and allocations.
 
-(defun docker-tramp--parse-running-containers (&optional ignored)
+Return a plist of running tasks with the following keys:
+
+- :name
+- :alloc-id
+- :node-name
+- :task-name
+- :job-type
+- :client-status"
+  (let* ((allocs (nomad-tramp--call-nomad-api "allocations?namespace=*"))
+         (allocs-and-tasks (-mapcat
+                            (-lambda ((&alist
+                                       'Name
+                                       'ID
+                                       'NodeName
+                                       'TaskStates
+                                       'JobType
+                                       'ClientStatus
+                                       ))
+                              (mapcar
+                               (-lambda ((task-name))
+                                 (list
+                                  :name Name
+                                  :alloc-id ID
+                                  :node-name NodeName
+                                  :task-name (symbol-name task-name)
+                                  :job-type JobType
+                                  :client-status ClientStatus))
+                               TaskStates))
+                            allocs))
+         (allocs-and-tasks
+          (--filter
+           (and (equal (plist-get it :client-status) "running"))
+           allocs-and-tasks)))
+    allocs-and-tasks))
+
+(defun nomad-tramp--parse-running-jobs (&optional ignored)
   "Return a list of (user host) tuples.
 
-TRAMP calls this function with a filename which is IGNORED.  The
-user is an empty string because the docker TRAMP method uses bash
-to connect to the default user containers."
-  (cl-loop for (id name) in (docker-tramp--running-containers)
-           collect (list "" (if docker-tramp-use-names name id))))
+TRAMP calls this function with a filename which is IGNORED.
+
+The user is the name of the task because TRAMP only supports
+predefined templates for user, host and port.  The host is the
+allocation ID and the port is the node name.
+
+The node name is only displayed for convenience, it is not used
+by nomad-tramp."
+  (mapcar
+   (-lambda ((&plist :alloc-id :task-name :node-name))
+     (list task-name (format "%s#%s" alloc-id node-name)))
+   (nomad-tramp--running-tasks)))
 
 ;;;###autoload
-(defun docker-tramp-cleanup ()
-  "Cleanup TRAMP cache for docker method."
+(defun nomad-tramp-cleanup ()
+  "Cleanup TRAMP cache for nomad-exec method."
   (interactive)
-  (let ((containers (apply 'append (docker-tramp--running-containers))))
+  (let ((containers (apply 'append (nomad-tramp--running-tasks))))
     (maphash (lambda (key _)
                (and (vectorp key)
-                    (string-equal docker-tramp-method (tramp-file-name-method key))
+                    (string-equal nomad-tramp-method (tramp-file-name-method key))
                     (not (member (tramp-file-name-host key) containers))
                     (remhash key tramp-cache-data)))
              tramp-cache-data))
@@ -155,25 +202,29 @@ to connect to the default user containers."
     (tramp-dump-connection-properties)))
 
 ;;;###autoload
-(defun docker-tramp-add-method ()
+(defun nomad-tramp-add-method ()
   "Add docker tramp method."
   (add-to-list 'tramp-methods
-               `(,docker-tramp-method
-                 (tramp-login-program      ,docker-tramp-docker-executable)
-                 (tramp-login-args         (,docker-tramp-docker-options ("exec" "-it") ("-u" "%u") ("%h") ("sh")))
-                 (tramp-remote-shell       "/bin/sh")
-                 (tramp-remote-shell-args  ("-i" "-c")))))
+               `(,nomad-tramp-method
+                 (tramp-login-program ,nomad-tramp-docker-executable)
+                 (tramp-login-args (,nomad-tramp-nomad-options
+                                    ("exec")
+                                    ("-task" "%u")
+                                    ("%h")
+                                    ("/bin/sh")))
+                 (tramp-remote-shell "/bin/sh")
+                 (tramp-remote-shell-args ("-i" "-c")))))
 
 ;;;###autoload
 (eval-after-load 'tramp
   '(progn
-     (docker-tramp-add-method)
-     (tramp-set-completion-function docker-tramp-method docker-tramp-completion-function-alist)))
+     (nomad-tramp-add-method)
+     (tramp-set-completion-function nomad-tramp-method nomad-tramp-completion-function-alist)))
 
-(provide 'docker-tramp)
+(provide 'nomad-tramp)
 
 ;; Local Variables:
 ;; indent-tabs-mode: nil
 ;; End:
 
-;;; docker-tramp.el ends here
+;;; nomad-tramp.el ends here
