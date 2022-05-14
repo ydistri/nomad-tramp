@@ -48,6 +48,8 @@
 ;;
 ;; where
 ;;
+;; | Part        | Description                                                             |
+;; | ----------- | ----------------------------------------------------------------------- |
 ;; | task@       | The task name (optional).  Default is the first task of the task group. |
 ;; | job         | The job name.                                                           |
 ;; | task-group  | The task group name.                                                    |
