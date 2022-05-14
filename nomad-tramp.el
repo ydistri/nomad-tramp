@@ -1,4 +1,4 @@
-;;; nomad-tramp.el --- TRAMP integration for HashiCorp Nomad docker containers  -*- lexical-binding: t; -*-
+;;; nomad-tramp.el --- TRAMP integration for HashiCorp Nomad Docker containers  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2015 Mario Rodas <marsam@users.noreply.github.com>
 ;; Copyright (C) 2022 YDISTRI S.E.
@@ -29,6 +29,10 @@
 
 ;;; Commentary:
 ;;
+;; > This project is a fork of
+;; > https://github.com/emacs-pe/docker-tramp.el which provides
+;; > similar functionality for Docker containers.
+;;
 ;; `nomad-tramp.el' offers a TRAMP method for Docker containers
 ;; deployed on HashiCorp Nomad.
 ;;
@@ -42,13 +46,13 @@
 ;;
 ;;     C-x C-f /nomad:task@job.task-group.alloc-index%node-name:/path/to/file
 ;;
-;;     where
+;; where
 ;;
-;; | task@ | The task name (optional).  Default is the first task of the task group. |
-;; | job  | The job name. |
-;; | task-group | The task group name. |
-;; | alloc-index | Allocation index.  If count = 1, it is always 0 |
-;; | %node-name | Name of the node where the allocation runs (optional) |
+;; | task@       | The task name (optional).  Default is the first task of the task group. |
+;; | job         | The job name.                                                           |
+;; | task-group  | The task group name.                                                    |
+;; | alloc-index | Allocation index.  If count = 1, it is always 0                         |
+;; | %node-name  | Name of the node where the allocation runs (optional)                   |
 ;;
 ;; ## Troubleshooting
 ;;
