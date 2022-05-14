@@ -5,7 +5,7 @@
 
 ;; Author: Matus Goljer <matus.goljer@ydistri.com>
 ;; Original Author: Mario Rodas <marsam@users.noreply.github.com>
-;; URL: https://github.com/emacs-pe/docker-tramp.el
+;; URL: https://github.com/ydistri/nomad-tramp
 ;; Keywords: docker, nomad, convenience
 ;; Version: 0.0.1
 ;; Package-Requires: ((emacs "26") (dash "2.19.1"))
