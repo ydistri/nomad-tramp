@@ -8,7 +8,7 @@
 ;; URL: https://github.com/emacs-pe/docker-tramp.el
 ;; Keywords: docker, nomad, convenience
 ;; Version: 0.0.1
-;; Package-Requires: ((emacs "26") (dash "2.19.1") (cl-lib "0.5"))
+;; Package-Requires: ((emacs "26") (dash "2.19.1"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -32,26 +32,23 @@
 ;; `nomad-tramp.el' offers a TRAMP method for Docker containers
 ;; deployed on HashiCorp Nomad.
 ;;
-;; > **NOTE**: `nomad-tramp.el' relies on the `nomad exec`
-;; > command.  Tested with nomad version 1.2.6+ but should work with
+;; > **NOTE**: `nomad-tramp.el' relies on the `nomad exec` command and
+;; > python3.  Tested with nomad version 1.2.6+ but should work with
 ;; > any nomad version which supports exec.
 ;;
 ;; ## Usage
 ;;
-;; Offers the TRAMP method `nomad-exec` to access running containers
+;; Offers the TRAMP method `nomad` to access running containers
 ;;
-;;     C-x C-f /nomad-exec:user@alloc-task:/path/to/file
+;;     C-x C-f /nomad:task@job.task-group.alloc-index%node-name:/path/to/file
 ;;
 ;;     where
-;;       user           is the user that you want to use inside the container (optional)
-;;       alloc          is the allocation ID
-;;       task           is the task name
 ;;
-;; ### [Multi-hop][] examples
-;;
-;; If you container is hosted on `vm.example.net`:
-;;
-;;     /ssh:vm-user@vm.example.net|nomad-exec:user@f8a4a37f-web:/path/to/file
+;; | task@ | The task name (optional).  Default is the first task of the task group. |
+;; | job  | The job name. |
+;; | task-group | The task group name. |
+;; | alloc-index | Allocation index.  If count = 1, it is always 0 |
+;; | %node-name | Name of the node where the allocation runs (optional) |
 ;;
 ;; ## Troubleshooting
 ;;
@@ -76,12 +73,10 @@
 ;;
 ;;     (add-to-list 'tramp-remote-path 'tramp-own-remote-path)
 ;;
-;; [Multi-hop]: https://www.gnu.org/software/emacs/manual/html_node/tramp/Ad_002dhoc-multi_002dhops.html
 ;; [98a5112]: http://git.savannah.gnu.org/cgit/tramp.git/commit/?id=98a511248a9405848ed44de48a565b0b725af82c
 ;; [docker-tramp-compat.el]: https://github.com/emacs-pe/docker-tramp.el/raw/master/docker-tramp-compat.el
 
 ;;; Code:
-(eval-when-compile (require 'cl-lib))
 
 (require 'dash)
 (require 'tramp)
