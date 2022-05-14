@@ -1,8 +1,7 @@
 (source gnu)
 (source melpa)
 
-(package-file "docker-tramp.el")
+(package-file "nomad-tramp.el")
 
-(development
- (depends-on "ert")
- (depends-on "undercover"))
+(depends-on "dash")
+(depends-on "emacs" "26")
