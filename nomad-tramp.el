@@ -94,7 +94,10 @@
   :link '(url-link :tag "Github" "https://github.com/ydistri/nomad-tramp.el")
   :link '(emacs-commentary-link :tag "Commentary" "nomad-tramp"))
 
-(defconst nomad-tramp-docker-executable "nomad")
+(defcustom nomad-tramp-script-directory (locate-user-emacs-file "nomad-tramp/")
+  "Directory where the helper python script is installed."
+  :type 'directory
+  :group 'nomad-tramp)
 
 ;;;###autoload
 (defcustom nomad-tramp-nomad-options nil
@@ -107,7 +110,7 @@
   :type 'boolean
   :group 'nomad-tramp)
 
-(defcustom nomad-nomad-addr "http://localhost:4646"
+(defcustom nomad-tramp-nomad-addr "http://localhost:4646"
   "Address where the Nomad API is accessible."
   :type 'string
   :group 'nomad-tramp)
@@ -124,7 +127,7 @@
 (defun nomad-tramp--call-nomad-api (api-route)
   (with-current-buffer
       (url-retrieve-synchronously
-       (format "%s/v1/%s" nomad-nomad-addr api-route))
+       (format "%s/v1/%s" nomad-tramp-nomad-addr api-route))
     (goto-char (point-min))
     (search-forward "\n\n")
     (delete-region (point-min) (point))
@@ -181,39 +184,64 @@ allocation ID and the port is the node name.
 The node name is only displayed for convenience, it is not used
 by nomad-tramp."
   (mapcar
-   (-lambda ((&plist :alloc-id :task-name :node-name))
-     (list task-name (format "%s#%s" alloc-id node-name)))
+   (-lambda ((&plist :name :task-name :node-name))
+     (list task-name (format "%s%%%s"
+                             (replace-regexp-in-string
+                              "\\[\\(.*?\\)\\]"
+                              ".\\1"
+                              name)
+                             node-name)))
    (nomad-tramp--running-tasks)))
-
-;;;###autoload
-(defun nomad-tramp-cleanup ()
-  "Cleanup TRAMP cache for nomad-exec method."
-  (interactive)
-  (let ((containers (apply 'append (nomad-tramp--running-tasks))))
-    (maphash (lambda (key _)
-               (and (vectorp key)
-                    (string-equal nomad-tramp-method (tramp-file-name-method key))
-                    (not (member (tramp-file-name-host key) containers))
-                    (remhash key tramp-cache-data)))
-             tramp-cache-data))
-  (setq tramp-cache-data-changed t)
-  (if (zerop (hash-table-count tramp-cache-data))
-      (ignore-errors (delete-file tramp-persistency-file-name))
-    (tramp-dump-connection-properties)))
 
 ;;;###autoload
 (defun nomad-tramp-add-method ()
   "Add docker tramp method."
-  (add-to-list 'tramp-methods
-               `(,nomad-tramp-method
-                 (tramp-login-program ,nomad-tramp-docker-executable)
-                 (tramp-login-args (,nomad-tramp-nomad-options
-                                    ("exec")
-                                    ("-task" "%u")
-                                    ("%h")
-                                    ("/bin/sh")))
-                 (tramp-remote-shell "/bin/sh")
-                 (tramp-remote-shell-args ("-i" "-c")))))
+  (let ((script-file (file-truename (format "%s/nomad-tramp" nomad-tramp-script-directory))))
+    (unless (file-exists-p nomad-tramp-script-directory)
+      (make-directory nomad-tramp-script-directory t))
+    (with-temp-file script-file
+      (insert "#!/usr/bin/env python3
+
+import os
+import re
+import json
+import argparse
+from urllib.request import urlopen
+
+parser = argparse.ArgumentParser(description='Call nomad exec.')
+parser.add_argument('--address', type = str, required = True,
+                    help = 'Nomad server address.')
+parser.add_argument('--task', type = str, required = False,
+                    help = 'Task name.')
+parser.add_argument('--alloc-string', type = str, required = True,
+                    help = 'Allocation name and Node name connected with %.')
+
+args = parser.parse_args()
+job = args.alloc_string.split('.')[0]
+alloc_name = args.alloc_string.split('%')[0]
+alloc_name = re.sub(r'(.*)\\.(\\d+)$', r'\\1[\\2]', alloc_name)
+
+response = urlopen(f'{args.address}/v1/job/{job}/allocations')
+data_json = json.loads(response.read())
+alloc = next((item for item in data_json if item['Name'] == alloc_name))
+alloc_id = alloc['ID']
+task = args.task
+if task is None or task == '':
+    task = list(alloc['TaskStates'].keys())[0]
+
+os.execvp('nomad', ['nomad', 'exec', '-task', task, alloc_id, '/bin/sh'])
+"))
+    (chmod script-file #o755)
+    (add-to-list 'tramp-methods
+                 `(,nomad-tramp-method
+                   (tramp-login-program ,script-file)
+                   (tramp-login-args (,nomad-tramp-nomad-options
+                                      ("--address" ,nomad-tramp-nomad-addr)
+                                      ("--task" "%u")
+                                      ("--alloc-string")
+                                      ("%h")))
+                   (tramp-remote-shell "/bin/sh")
+                   (tramp-remote-shell-args ("-i" "-c"))))))
 
 ;;;###autoload
 (eval-after-load 'tramp
