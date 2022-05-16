@@ -224,7 +224,7 @@ alloc_name = re.sub(r'(.*)\\.(\\d+)$', r'\\1[\\2]', alloc_name)
 
 response = urlopen(f'{args.address}/v1/job/{job}/allocations')
 data_json = json.loads(response.read())
-alloc = next((item for item in data_json if item['Name'] == alloc_name))
+alloc = next((item for item in data_json if item['Name'] == alloc_name and item['ClientStatus'] == 'running'))
 alloc_id = alloc['ID']
 task = args.task
 if task is None or task == '':
